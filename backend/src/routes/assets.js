@@ -513,6 +513,7 @@ router.get('/:id/view', requireAuth, async (req, res, next) => {
       }
     });
 
+    res.setHeader('Access-Control-Expose-Headers', 'X-Document-Integrity');
     res.setHeader('X-Document-Integrity', isIntegrityVerified ? 'verified' : 'failed');
     return res.sendFile(filePath);
   } catch (err) {
