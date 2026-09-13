@@ -12,6 +12,7 @@ import { Verification } from './pages/Verification';
 import { Transactions } from './pages/Transactions';
 import { Notifications } from './pages/Notifications';
 import { Administration } from './pages/Administration';
+import { AccessRequests } from './pages/AccessRequests';
 import { LandingPage } from './pages/LandingPage';
 import { APP_CONFIG } from './config/constants';
 
@@ -215,6 +216,7 @@ const App = () => {
           <Route path="audit" element={<AuditLogs />} />
           <Route path="transactions" element={<Transactions />} />
           <Route path="notifications" element={<Notifications />} />
+          <Route path="access-requests" element={<AccessRequests />} />
           <Route path="administration" element={<Administration />} />
           <Route path="settings" element={<Settings />} />
         </Route>

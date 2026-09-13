@@ -30,6 +30,7 @@ model User {
   roleRevocations   UserRole[]       @relation("RevokedByUser")
   assetPermissions  AssetPermission[] @relation("AssetPermissionUser")
   grantedAssetPerms AssetPermission[] @relation("AssetPermissionGranter")
+  accessRequests    AccessRequest[]
   createdAssets     Asset[]
   ownedAssets       OwnershipRecord[] @relation("OwnerUser")
   transferredAssets OwnershipRecord[] @relation("FromUser")
@@ -231,6 +232,7 @@ model Asset {
   ownershipRecords OwnershipRecord[]
   managerScopes    ManagerAssetScope[]
   assetPermissions AssetPermission[]  @relation("AssetPermissionAsset")
+  accessRequests   AccessRequest[]
 
   @@index([status])
   @@index([category])
@@ -394,4 +396,21 @@ model AssetPermission {
   @@index([userId])
   @@index([assetId])
   @@map("asset_permissions")
+}
+
+model AccessRequest {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  assetId   String   @map("asset_id") @db.Uuid
+  status    String   @default("pending") // pending, approved, rejected
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, assetId])
+  @@index([userId])
+  @@index([assetId])
+  @@map("access_requests")
 }

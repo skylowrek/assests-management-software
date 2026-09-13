@@ -365,6 +365,169 @@ router.post('/:id/transfer', requireAuth, requirePermission('asset.transfer'), v
 });
 
 /**
+ * @route GET /api/v1/assets/access-requests/pending
+ * @desc Get all pending access requests (Admin/Manager)
+ */
+router.get('/access-requests/pending', requireAuth, async (req, res, next) => {
+  try {
+    if (!req.user.roles.includes('admin') && !req.user.roles.includes('manager')) {
+      return error(res, 'Access denied', 403);
+    }
+    const requests = await prisma.accessRequest.findMany({
+      where: { status: 'pending' },
+      include: {
+        user: { select: { name: true, email: true } },
+        asset: { select: { assetCode: true, name: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    return success(res, requests);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @route POST /api/v1/assets/access-requests/:reqId/approve
+ * @desc Approve an access request
+ */
+router.post('/access-requests/:reqId/approve', requireAuth, async (req, res, next) => {
+  try {
+    if (!req.user.roles.includes('admin') && !req.user.roles.includes('manager')) {
+      return error(res, 'Access denied', 403);
+    }
+    const accessReq = await prisma.accessRequest.findUnique({
+      where: { id: req.params.reqId },
+      include: { asset: true }
+    });
+    if (!accessReq) return error(res, 'Request not found', 404);
+    if (accessReq.status !== 'pending') return error(res, 'Request is not pending', 400);
+
+    await prisma.assetPermission.upsert({
+      where: {
+        userId_assetId_permission: {
+          userId: accessReq.userId,
+          assetId: accessReq.assetId,
+          permission: 'ASSET_VIEW'
+        }
+      },
+      update: {},
+      create: {
+        userId: accessReq.userId,
+        assetId: accessReq.assetId,
+        permission: 'ASSET_VIEW',
+        grantedBy: req.user.id
+      }
+    });
+
+    await prisma.accessRequest.update({
+      where: { id: accessReq.id },
+      data: { status: 'approved' }
+    });
+
+    await prisma.notification.create({
+      data: {
+        userId: accessReq.userId,
+        type: 'access_approved',
+        title: 'Document Access Approved',
+        body: `Your request to view the document for ${accessReq.asset.name} has been approved.`,
+        entityType: 'asset',
+        entityId: accessReq.assetId
+      }
+    });
+
+    return success(res, { message: 'Access request approved' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @route POST /api/v1/assets/access-requests/:reqId/reject
+ * @desc Reject an access request
+ */
+router.post('/access-requests/:reqId/reject', requireAuth, async (req, res, next) => {
+  try {
+    if (!req.user.roles.includes('admin') && !req.user.roles.includes('manager')) {
+      return error(res, 'Access denied', 403);
+    }
+    const accessReq = await prisma.accessRequest.findUnique({
+      where: { id: req.params.reqId },
+      include: { asset: true }
+    });
+    if (!accessReq) return error(res, 'Request not found', 404);
+    if (accessReq.status !== 'pending') return error(res, 'Request is not pending', 400);
+
+    await prisma.accessRequest.update({
+      where: { id: accessReq.id },
+      data: { status: 'rejected' }
+    });
+
+    await prisma.notification.create({
+      data: {
+        userId: accessReq.userId,
+        type: 'access_rejected',
+        title: 'Document Access Rejected',
+        body: `Your request to view the document for ${accessReq.asset.name} was rejected.`,
+        entityType: 'asset',
+        entityId: accessReq.assetId
+      }
+    });
+
+    return success(res, { message: 'Access request rejected' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @route POST /api/v1/assets/:id/request-access
+ * @desc Request access to view an asset document
+ */
+router.post('/:id/request-access', requireAuth, async (req, res, next) => {
+  try {
+    const assetId = req.params.id;
+    const asset = await prisma.asset.findUnique({ where: { id: assetId } });
+    if (!asset) return error(res, 'Asset not found', 404);
+
+    const existingReq = await prisma.accessRequest.findUnique({
+      where: { userId_assetId: { userId: req.user.id, assetId } }
+    });
+
+    if (existingReq && existingReq.status === 'pending') {
+      return error(res, 'Access request already pending', 400);
+    }
+
+    await prisma.accessRequest.upsert({
+      where: { userId_assetId: { userId: req.user.id, assetId } },
+      update: { status: 'pending' },
+      create: { userId: req.user.id, assetId, status: 'pending' }
+    });
+
+    const admins = await prisma.user.findMany({
+      where: { userRoles: { some: { role: { name: 'admin' } } } }
+    });
+    
+    if (admins.length > 0) {
+      await prisma.notification.createMany({
+        data: admins.map(a => ({
+          userId: a.id,
+          type: 'access_request',
+          title: 'New Document Access Request',
+          body: `${req.user.name} has requested access to view ${asset.name}.`,
+          entityType: 'asset',
+          entityId: asset.id
+        }))
+      });
+    }
+
+    return success(res, { message: 'Access request submitted successfully' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * @route GET /api/v1/assets/:id
  * @desc Get asset details
  */

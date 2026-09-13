@@ -169,6 +169,7 @@ export const DashboardLayout = () => {
 
           <div className="nav-section-label">System</div>
           <SidebarItem to="/dashboard/notifications" icon={Bell} label="Notifications" />
+          {isAdmin && <SidebarItem to="/dashboard/access-requests" icon={FileText} label="Access Requests" />}
           {isAdmin && <SidebarItem to="/dashboard/administration" icon={Building2} label="Administration" />}
           <SidebarItem to="/dashboard/settings" icon={Settings} label="Settings" />
         </nav>

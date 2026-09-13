@@ -297,6 +297,7 @@ const SecureDocumentViewer = ({ assetId, onClose }) => {
   const [loading, setLoading] = React.useState(true);
   const [errorMsg, setErrorMsg] = React.useState('');
   const [integrityStatus, setIntegrityStatus] = React.useState('');
+  const [requestStatus, setRequestStatus] = React.useState('idle');
 
   React.useEffect(() => {
     api.get(`/assets/${assetId}/view`, { responseType: 'blob' })
@@ -346,7 +347,33 @@ const SecureDocumentViewer = ({ assetId, onClose }) => {
           ) : errorMsg ? (
             <div style={{ textAlign: 'center', padding: '2rem' }}>
               <AlertTriangle size={48} color="#ef4444" style={{ margin: '0 auto 1rem' }} />
-              <div style={{ color: '#ef4444', fontWeight: '500', fontSize: '1.1rem' }}>{errorMsg}</div>
+              <div style={{ color: '#ef4444', fontWeight: '500', fontSize: '1.1rem', marginBottom: '1rem' }}>{errorMsg}</div>
+              {errorMsg.includes('Missing ASSET_VIEW') && (
+                <div style={{ marginTop: '1rem' }}>
+                  {requestStatus === 'success' ? (
+                    <div style={{ color: '#10b981', fontWeight: '600', padding: '0.5rem 1rem', background: '#d1fae5', borderRadius: '4px' }}>
+                      Request Submitted! Admins will review your request.
+                    </div>
+                  ) : (
+                    <button 
+                      onClick={async () => {
+                        setRequestStatus('loading');
+                        try {
+                          await api.post(`/assets/${assetId}/request-access`);
+                          setRequestStatus('success');
+                        } catch (err) {
+                          setRequestStatus('idle');
+                          alert(err.response?.data?.error?.message || 'Failed to request access');
+                        }
+                      }} 
+                      disabled={requestStatus === 'loading'} 
+                      className="btn btn-primary"
+                    >
+                      {requestStatus === 'loading' ? 'Requesting...' : 'Request Access'}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ) : blobUrl ? (
             <iframe src={blobUrl} style={{ width: '100%', height: '100%', border: 'none' }} title="Document Preview" />
