@@ -292,10 +292,77 @@ const TransferModal = ({ asset, onClose, onSuccess }) => {
     </div>
   );
 };
+const SecureDocumentViewer = ({ assetId, onClose }) => {
+  const [blobUrl, setBlobUrl] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [errorMsg, setErrorMsg] = React.useState('');
+  const [integrityStatus, setIntegrityStatus] = React.useState('');
+
+  React.useEffect(() => {
+    api.get(`/assets/${assetId}/view`, { responseType: 'blob' })
+      .then(res => {
+        const url = URL.createObjectURL(res.data);
+        setBlobUrl(url);
+        setIntegrityStatus(res.headers['x-document-integrity'] || 'unknown');
+        setLoading(false);
+      })
+      .catch(async (err) => {
+        let msg = 'Failed to load document';
+        if (err.response?.data && err.response.data instanceof Blob) {
+           try {
+             const text = await err.response.data.text();
+             const data = JSON.parse(text);
+             msg = data.error?.message || msg;
+           } catch (e) { }
+        } else if (err.response?.status === 403) {
+           msg = 'Access denied: Missing ASSET_VIEW permission';
+        }
+        setErrorMsg(msg);
+        setLoading(false);
+      });
+
+    return () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [assetId]);
+
+  return (
+    <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }} style={{ zIndex: 10000 }}>
+      <div className="modal" style={{ width: '90%', maxWidth: '1000px', height: '90vh', display: 'flex', flexDirection: 'column', padding: 0 }} onMouseDown={e => e.stopPropagation()}>
+        <div className="modal-header" style={{ padding: '1.5rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--text-primary)' }}>Secure Document Viewer</h3>
+            {integrityStatus && (
+              <span style={{ fontSize: '0.75rem', marginTop: '0.25rem', display: 'inline-block', color: integrityStatus === 'verified' ? '#10b981' : '#ef4444', fontWeight: '600' }}>
+                {integrityStatus === 'verified' ? '✓ Document integrity verified' : '⚠ Document integrity verification failed'}
+              </span>
+            )}
+          </div>
+          <button type="button" className="modal-close" onClick={onClose}><X size={20} /></button>
+        </div>
+        <div className="modal-body" style={{ flex: 1, padding: 0, position: 'relative', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {loading ? (
+            <div className="loading-spinner-large" style={{ width: 32, height: 32, borderWidth: 3 }}></div>
+          ) : errorMsg ? (
+            <div style={{ textAlign: 'center', padding: '2rem' }}>
+              <AlertTriangle size={48} color="#ef4444" style={{ margin: '0 auto 1rem' }} />
+              <div style={{ color: '#ef4444', fontWeight: '500', fontSize: '1.1rem' }}>{errorMsg}</div>
+            </div>
+          ) : blobUrl ? (
+            <iframe src={blobUrl} style={{ width: '100%', height: '100%', border: 'none' }} title="Document Preview" />
+          ) : (
+            <div style={{ color: 'var(--text-secondary)' }}>Preview unavailable</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const AssetDetailModal = ({ asset, onClose }) => {
   const [detail, setDetail] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  const [viewDocAssetId, setViewDocAssetId] = React.useState(null);
 
   const docUrl = detail?.metadata?.find(m => m.key === '_documentUrl')?.value;
   const docHash = detail?.metadata?.find(m => m.key === '_documentHash')?.value;
@@ -395,9 +462,9 @@ const AssetDetailModal = ({ asset, onClose }) => {
                     </div>
                     {docUrl && (
                       <div style={{ marginBottom: '1rem' }}>
-                        <a href={`${import.meta.env.VITE_API_URL || 'http://localhost:10000'}${docUrl}`} target="_blank" rel="noreferrer" className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}>
+                        <button type="button" onClick={() => setViewDocAssetId(detail.id)} className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}>
                           View Document
-                        </a>
+                        </button>
                       </div>
                     )}
                     <div style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>SHA-256 Checksum</div>
@@ -419,6 +486,7 @@ const AssetDetailModal = ({ asset, onClose }) => {
           )}
         </div>
       </div>
+      {viewDocAssetId && <SecureDocumentViewer assetId={viewDocAssetId} onClose={() => setViewDocAssetId(null)} />}
     </div>
   );
 };

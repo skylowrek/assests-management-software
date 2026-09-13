@@ -28,6 +28,8 @@ model User {
   userRoles         UserRole[]       @relation("UserToRole")
   roleAssignments   UserRole[]       @relation("AssignedByUser")
   roleRevocations   UserRole[]       @relation("RevokedByUser")
+  assetPermissions  AssetPermission[] @relation("AssetPermissionUser")
+  grantedAssetPerms AssetPermission[] @relation("AssetPermissionGranter")
   createdAssets     Asset[]
   ownedAssets       OwnershipRecord[] @relation("OwnerUser")
   transferredAssets OwnershipRecord[] @relation("FromUser")
@@ -228,6 +230,7 @@ model Asset {
   metadata         AssetMetadata[]
   ownershipRecords OwnershipRecord[]
   managerScopes    ManagerAssetScope[]
+  assetPermissions AssetPermission[]  @relation("AssetPermissionAsset")
 
   @@index([status])
   @@index([category])
@@ -373,4 +376,22 @@ model IdempotencyKey {
 
   @@id([key, endpoint])
   @@map("idempotency_keys")
+}
+
+model AssetPermission {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  assetId      String   @map("asset_id") @db.Uuid
+  permission   String
+  grantedBy    String?  @map("granted_by") @db.Uuid
+  grantedAt    DateTime @default(now()) @map("granted_at")
+
+  user         User     @relation("AssetPermissionUser", fields: [userId], references: [id], onDelete: Cascade)
+  asset        Asset    @relation("AssetPermissionAsset", fields: [assetId], references: [id], onDelete: Cascade)
+  granter      User?    @relation("AssetPermissionGranter", fields: [grantedBy], references: [id], onDelete: SetNull)
+
+  @@unique([userId, assetId, permission])
+  @@index([userId])
+  @@index([assetId])
+  @@map("asset_permissions")
 }

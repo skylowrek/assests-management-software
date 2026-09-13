@@ -8,6 +8,7 @@ const { requirePermission } = require('../middleware/rbac');
 const blockchain = require('../services/blockchain');
 const upload = require('../middleware/upload');
 const fs = require('fs');
+const path = require('path');
 
 const router = express.Router();
 
@@ -395,6 +396,193 @@ router.get('/:id', requireAuth, requirePermission('asset.read'), async (req, res
         blockNumber: or.blockNumber ? or.blockNumber.toString() : null
       }))
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @route GET /api/v1/assets/:id/view
+ * @desc Securely view the document attached to an asset
+ */
+router.get('/:id/view', requireAuth, async (req, res, next) => {
+  try {
+    const assetId = req.params.id;
+
+    // Load asset with metadata to find document
+    const asset = await prisma.asset.findUnique({
+      where: { id: assetId },
+      include: {
+        metadata: true
+      }
+    });
+
+    if (!asset) {
+      return error(res, 'Asset not found', 404);
+    }
+
+    // Check Authorization
+    let isAuthorized = false;
+    
+    // 1. Admins can view all
+    if (req.user.roles.includes('admin')) {
+      isAuthorized = true;
+    }
+
+    // 2. Managers with scope over this asset
+    if (!isAuthorized && req.user.roles.includes('manager')) {
+      const scope = await prisma.managerAssetScope.findFirst({
+        where: {
+          managerUserId: req.user.id,
+          OR: [
+            { isGlobal: true },
+            { assetId: assetId },
+            { assetCategory: asset.category }
+          ]
+        }
+      });
+      if (scope) isAuthorized = true;
+    }
+
+    // 3. User with explicit ASSET_VIEW permission for this specific asset
+    if (!isAuthorized) {
+      const perm = await prisma.assetPermission.findUnique({
+        where: {
+          userId_assetId_permission: {
+            userId: req.user.id,
+            assetId: assetId,
+            permission: 'ASSET_VIEW'
+          }
+        }
+      });
+      if (perm) isAuthorized = true;
+    }
+
+    // Audit unauthorized attempt
+    if (!isAuthorized) {
+      await prisma.auditEvent.create({
+        data: {
+          eventType: 'asset.view_denied',
+          severity: 'warning',
+          actorUserId: req.user.id,
+          entityType: 'asset',
+          entityId: asset.id,
+          action: 'view_document',
+          payload: { reason: 'Missing ASSET_VIEW permission' },
+          status: 'failed',
+          eventHash: crypto.randomBytes(32).toString('hex')
+        }
+      });
+      return error(res, 'Access denied: Missing ASSET_VIEW permission for this asset', 403);
+    }
+
+    const docUrlMeta = asset.metadata.find(m => m.key === '_documentUrl');
+    const docHashMeta = asset.metadata.find(m => m.key === '_documentHash');
+
+    if (!docUrlMeta || !docUrlMeta.value) {
+      return error(res, 'No document attached to this asset', 404);
+    }
+
+    // Determine absolute path
+    const filePath = path.join(__dirname, '../../', docUrlMeta.value);
+    
+    if (!fs.existsSync(filePath)) {
+      return error(res, 'Document file not found on server', 404);
+    }
+
+    // Integrity Verification (compare on-the-fly hash to stored hash)
+    const fileBuffer = fs.readFileSync(filePath);
+    const currentHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    const isIntegrityVerified = (currentHash === docHashMeta?.value);
+
+    // Audit successful view
+    await prisma.auditEvent.create({
+      data: {
+        eventType: 'asset.viewed',
+        severity: 'info',
+        actorUserId: req.user.id,
+        entityType: 'asset',
+        entityId: asset.id,
+        action: 'view_document',
+        payload: { 
+          documentHash: currentHash,
+          integrityVerified: isIntegrityVerified
+        },
+        status: 'success',
+        eventHash: crypto.randomBytes(32).toString('hex')
+      }
+    });
+
+    res.setHeader('X-Document-Integrity', isIntegrityVerified ? 'verified' : 'failed');
+    return res.sendFile(filePath);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * @route POST /api/v1/assets/:id/permissions
+ * @desc Grant or revoke an asset-specific permission for a user
+ */
+router.post('/:id/permissions', requireAuth, validate([
+  body('targetUserId').isUUID().withMessage('targetUserId must be a valid UUID'),
+  body('permission').isString().notEmpty().withMessage('permission is required'),
+  body('action').isIn(['grant', 'revoke']).withMessage('action must be grant or revoke')
+]), async (req, res, next) => {
+  try {
+    const assetId = req.params.id;
+    const { targetUserId, permission, action } = req.body;
+
+    // Only Admin or Manager can modify permissions
+    if (!req.user.roles.includes('admin') && !req.user.roles.includes('manager')) {
+      return error(res, 'Access denied', 403);
+    }
+
+    const asset = await prisma.asset.findUnique({ where: { id: assetId } });
+    if (!asset) return error(res, 'Asset not found', 404);
+
+    if (action === 'grant') {
+      await prisma.assetPermission.upsert({
+        where: {
+          userId_assetId_permission: {
+            userId: targetUserId,
+            assetId: assetId,
+            permission: permission
+          }
+        },
+        update: {},
+        create: {
+          userId: targetUserId,
+          assetId: assetId,
+          permission: permission,
+          grantedBy: req.user.id
+        }
+      });
+    } else {
+      await prisma.assetPermission.deleteMany({
+        where: {
+          userId: targetUserId,
+          assetId: assetId,
+          permission: permission
+        }
+      });
+    }
+
+    await prisma.auditEvent.create({
+      data: {
+        eventType: 'asset.permission_changed',
+        severity: 'info',
+        actorUserId: req.user.id,
+        entityType: 'asset',
+        entityId: asset.id,
+        action: `${action}_permission`,
+        payload: { targetUserId, permission },
+        status: 'success',
+        eventHash: crypto.randomBytes(32).toString('hex')
+      }
+    });
+
+    return success(res, { message: `Permission ${action}ed successfully` });
   } catch (err) {
     next(err);
   }
